@@ -1,0 +1,186 @@
+---
+title: "Practical Machine Learning"
+author: "Michael Witherspoon II"
+date: "10/21/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+## Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Getting and Loading the Data into R
+
+Here, we create a folder titled "pml" for our data and load the training and test datasets into R. Note that the date of the download is also recorded for organizational purposes.
+
+```{r getdata}
+## Create data directory if one does not exist
+if(!file.exists("./pml")) {
+  dir.create("./pml")
+  
+  fileUrl1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+  download.file(fileUrl1, destfile = "./pml/pml-training.csv")
+  dateDownloaded1 <- format(Sys.time(), "%a %b %d %Y %X")
+  
+  fileUrl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+  download.file(fileUrl2, destfile = "./pml/pml-testing.csv")
+  dateDownloaded2 <- format(Sys.time(), "%a %b %d %Y %X")
+}
+
+## Change working directory to pml directory
+setwd("./pml")
+
+## Reads the data into R
+trainRaw <- read.csv("pml-training.csv")
+testRaw <- read.csv("pml-testing.csv")
+```
+
+## Exploratory Data Analysis
+
+Let's take a look at our raw data and see if we can clean it up a bit.
+
+```{r analysis}
+dim(trainRaw); dim(testRaw)
+
+# Removing NA columns from both training and test sets
+ind1 <- which(colSums(is.na(trainRaw)) > 0)
+ind2 <- which(colSums(is.na(testRaw)) > 0)
+ind <- unique(ind1, ind2) # we want both sets to have the same variables
+newTrain <- trainRaw[-ind]; newTest <- testRaw[-ind] # cleaning
+
+# Removing blank columns from both training and test sets
+ind1 <- which(colSums(newTrain == "") > 0)
+ind2 <- which(colSums(newTest == "") > 0)
+ind <- unique(ind1, ind2) # we want both sets to have the same variables
+newTrain <- newTrain[-ind]; newTest <- newTest[-ind] # cleaning
+
+# Check to see if properly cleaned (should return FALSE twice)
+any(newTrain == "" | is.na(newTrain)); any(newTest == "" | is.na(newTest))
+
+# The first 7 variables are user data that we don't need to consider in our model
+newTrain <- newTrain[, -(1:7)]; newTest <- newTest[, -(1:7)]
+dim(newTrain); dim(newTest)
+```
+
+We are able to greatly reduce the number of variables we started with by eliminating columns that are either blank or contain NA values. Notice that we remove variables with missing values (NA or blank) from *both* the training and test sets. It is important to retain the same number of variables for each dataset for when we fit our models and validate our model fits through prediction.
+
+**We will use the cleaned-up testing data variable ```newTrain``` as our validation data to make our final prediction**
+
+## Split data into train and test sets
+
+Now, let's split the data into 75% training and 25% test. We will use the ```createDataPartition``` function from the ```caret``` package. Adding the argument ```list = F``` returns a matrix instead of a list.
+
+```{r datasets}
+library(caret)
+set.seed(3274)
+inTrain <- createDataPartition(newTrain$classe, p = 3/4, list = F)
+training <- newTrain[inTrain, ]
+testing <- newTrain[-inTrain, ]
+dim(training); dim(testing)
+```
+
+Above are our dimensions for our training and test sets, respectively.
+
+## Classification Tree
+
+First, we will fit a classification tree; this is the first model fit we learned to make in the class. It has a benefit of visualization that other models we will fit later do not have. Fitting our model with the ```train``` function from the ```caret``` package allows us to perform cross validation. Then, we will assess the accuracy of the model by predicting the ```classe``` variable and creating a confusion matrix.
+
+```{r classification_tree}
+# Fit a classification tree
+modFitCT <- train(classe ~ ., method = "rpart", data = training)
+print(modFitCT$finalModel)
+
+library(rattle)
+fancyRpartPlot(modFitCT$finalModel)
+
+# Predict the classe variable and determine the accuracy of the model
+predCT <- predict(modFitCT, testing)
+(cm <- confusionMatrix(predCT, testing$classe))
+acc <- cm$overall[[1]] # Accuracy: 0.5053
+oose <- 1 - acc # Out-of-sample error: 0.4947
+```
+
+The accuracy of the model is `r acc`, or 50.53%, which means our expected out-of-sample error is `r oose`, or (100 - 50.53)% = 49.47%. This error is significantly high; although it is beneficial to visualize these trees, the model is not a good fit and can be disregarded as we search for a better one.
+
+## Random Forest Model
+
+Here, we test the random forest model using the ```randomForest``` function from the ```randomForest``` package (which performs cross validation for us) and compute the variable importance, displaying only the first 5 variables. Thereafter, we compute the accuracy, as well as the out-of-sample error of our model.
+
+```{r random_forest}
+# Load randomForest library and set seed
+library(randomForest)
+set.seed(20394)
+
+# Fit model
+modFitRF <- randomForest(classe ~ ., data = training, importance = T)
+print(modFitRF)
+
+# Evaluate variable importance
+x <- round(importance(modFitRF), 2)[, "MeanDecreaseGini"]
+vImp <- names(x[order(x, decreasing = T)]) # variable importance
+vImp[1:5]
+
+# Validation testing
+predRF <- predict(modFitRF, testing)
+(cm <- confusionMatrix(predRF, testing$classe))
+acc <- cm$overall[[1]] # Accuracy: 0.9949
+oose <- 1 - acc # Out-of-sample error: 0.0051
+```
+
+The accuracy of this model is 99.49%. OOB error reported by cross validation is 0.43%, which is extremely low.
+**Note: The expected out-of-sample error is (100 - 99.49)% = 0.51% which is unusually low and possibly due to overfitting.**
+
+### Overfitting
+The OOB error we got from cross validation is quite low, but it doesn't hurt to be sure and take a closer look at our error. We would expect error to decrease as more trees are grown. To determine if this is a case of overfitting, we will first calculate the difference between R^2 values of our training and test datasets and compare RMSE (root mean squared error) values for both datasets. Then, we will graph the error as a function of the number of trees to determine if the error shrinks over time or grows over time.
+
+```{r overfitting_rmse}
+# Convert factor variables to numeric ones
+x1 <- as.numeric(modFitRF$predicted); y1 <- as.numeric(training$classe)
+x2 <- as.numeric(predRF); y2 <- as.numeric(testing$classe)
+
+# Overfit and RMSE comparison
+(overfit <- cor(x1, y1) ^ 2 - cor(x2, y2) ^ 2)
+(err <- RMSE(x1, y1) - RMSE(x2, y2))
+
+# Error vs. Number of Trees
+plot(modFitRF, main = "Error vs. Number of Trees")
+```
+
+Comparing the two R^2 values for the train and test sets gives a difference of `r overfit`, while the difference in RMSE values for the train and test sets gives `r err`. These values are close to 0, which means the fit is fine. Moreover, according to the graph plotted, the error shrinks as the number of trees increase. We would expect this if the model is not being overfit.
+
+## Generalized Boosted Regression Model
+
+Here, we test the boosted model using the ```train``` function from the ```caret``` package (which performs cross validation for us) once more and compute the variable importance, displaying only the first 5 variables. Thereafter, we compute the accuracy, as well as the out-of-sample error of our model.
+
+```{r boosted}
+set.seed(129)
+
+# verbose = F suppresses output
+modFitGBM <- train(classe ~ ., data = training, method = "gbm", verbose = F)
+print(modFitGBM)
+
+predGBM <- predict(modFitGBM, testing, n.trees = modFitGBM$n.trees)
+(cm <- confusionMatrix(predGBM, testing$classe))
+acc <- cm$overall[[1]] # Accuracy: 0.9621
+oose <- 1 - acc # Out-of-sample error: 0.0379
+
+plot(modFitGBM)
+```
+
+The accuracy of this model is 96.21%, and expected out-of-sample error is (100 - 96.21)% = 3.79%.
+
+## Assessment of Fitted Models
+
+It is evident that the random forest model is the most accurate. Let's use it to predict 20 different test cases using our validation data (the cleaned up test data with variable name ```newTest``` from earlier).
+
+```{r final_predictions}
+finalpred <- predict(modFitRF, newTest)
+```
+
+Here are our predictions for 20 different test cases:
+`r finalpred`
